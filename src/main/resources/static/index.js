@@ -1,11 +1,90 @@
-var host = window.location.href.replace("/index","");
+var host = window.location.href.replace("/index", "");
 // var host = "http://localhost:8087";
+var locateIndex = {
+// 选中的位置
+    position: {},
+    bindEvent: function () {
+        // 鼠标松开事件(鼠标松开的时候就获取当前选中的select)
+        document.onmouseup = function (e) {
+            var rangeTextareaDom = document.querySelector('#addarea')
+            locateIndex.position.start = rangeTextareaDom.selectionStart
+            locateIndex.position.end = rangeTextareaDom.selectionEnd
+        }
+    },
+    // 插入内容
+    insertText: function (insertValue) {
+        var rangeTextareaDom = document.querySelector('#addarea')
+        rangeTextareaDom.setRangeText(insertValue, this.position.start, this.position.end)
+        rangeTextareaDom.focus()
+        var start = this.position.start + insertValue.length
+        rangeTextareaDom.setSelectionRange(start, start)
+    }
+};
+
+var paste = {
+    bindEvent: function () {
+        $("#addarea").on('paste', function (eventObj) {
+            // 处理粘贴事件
+            var event = eventObj.originalEvent;
+            var imageRe = new RegExp(/image\/.*/);
+            var fileList = $.map(event.clipboardData.items, function (o) {
+                if (imageRe.test(o.type)) {
+                    var blob = o.getAsFile();
+                    return blob;
+                }
+            });
+            if (fileList.length <= 0) {
+                return
+            }
+            upload(fileList);
+            //阻止默认行为即不让剪贴板内容在div中显示出来
+            event.preventDefault();
+        });
+    }
+}
+
 $(function () {
     // alert("hello2");
     add();
     writeBtnHandle();
     search();
+    locateIndex.bindEvent();
+    paste.bindEvent();
 });
+
+function upload(fileList) {
+    for (var i = 0, l = fileList.length; i < l; i++) {
+        var fd = new FormData();
+        var f = fileList[i];
+        fd.append('file', f);
+        $.ajax({
+            url: "/cfind/upload",
+            type: 'POST',
+            // dataType: 'json',
+            data: fd,
+            processData: false,
+            contentType: false,
+            xhrFields: {withCredentials: true},
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Credentials': 'true'
+            },
+            success: function (res) {
+                // for (var i = 0; i < len; i++) {
+                //     var img = document.createElement('img');
+                //     img.src = res.data[i]; //设置上传完图片之后展示的图片
+                //     editor.appendChild(img);
+                // }
+                var img = "<div><img src=\"" + res + "\"></div>";
+                locateIndex.insertText(img);
+            },
+            error: function (er) {
+                console.log("upload failed" + er);
+                alert("上传图片错误");
+            }
+        });
+    }
+}
 
 function writeBtnHandle() {
     var writebtn = $("#writebtn");
@@ -19,24 +98,25 @@ function writeBtnHandle() {
     });
 }
 
-function add() {
-    var addBtn = $("#addbtn");
-    addBtn.click(function () {
-        var addText = $("#addarea").val();
-        if (addText != undefined && addText != '') {
-            // addText=addText.replace("\n","\r\n");
-            $.ajax(
-                {
-                    url: host + "/cfind/add",
-                    type: "POST",
-                    contentType:"application/json",
-                    data: addText,
-                    success: function (result) {
-                        alert("添加成功！");
-                    }
-                });
-        }
-    });
+function add(type) {
+    var addText = $("#addarea").val();
+    if (addText != undefined && addText != '') {
+        // addText=addText.replace("\n","\r\n");
+        var param = {
+            type: type,
+            reference: addText
+        };
+        $.ajax(
+            {
+                url: host + "/cfind/add",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify(param),
+                success: function (result) {
+                    alert("添加成功！");
+                }
+            });
+    }
 }
 
 function search() {

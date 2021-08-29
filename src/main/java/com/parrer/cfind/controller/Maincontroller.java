@@ -7,25 +7,23 @@ import com.parrer.util.DateUtil;
 import com.parrer.util.LogUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletResponse;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
@@ -37,6 +35,8 @@ public class Maincontroller {
     private String findCommandPath;
     @Value("${cfind.oriFilePath:/cfind/file}")
     private String oriFilePath;
+    @Value("${cfind.attachFileDir:/cfind/attach}")
+    private String attachFileDir;
 
     @GetMapping("/search/{keyword}")
     public ResponseEntity getByKeyword(@PathVariable("keyword") String keyword) {
@@ -149,33 +149,40 @@ public class Maincontroller {
 //                "原文：https://www.cnblogs.com/zenglintao/p/12823285.html\n";
 //        html=MarkdownUtils.renderHtml(html);
         String html = getAndResolve(keyword);
+//        String html="<div><img src=\"/cfind/getAttach/20210828182837\"></div>";
         return ResponseEntity.ok(html);
     }
 
     @PostMapping("/add")
-    public ResponseEntity addReference(@RequestBody String reference) {
-        LogUtil.apiEntry(reference);
+    public ResponseEntity addReference(@RequestBody Map<String, String> param) {
+        String type = param.get("type");
+        log.info("/add 接口进入，type-{}",type);
+        String reference = param.get("reference");
+        type = isBlank(type) ? "html" : type;
         if (isBlank(reference)) {
             log.error("blank reference!");
             return ResponseEntity.ok().build();
         }
-        reference=reference.replace("%0A","\r\n");
-        int beginIdx = reference.indexOf(">>->");
-        int endIdx = reference.indexOf("<-<<");
+        reference = reference.replace("%0A", "\r\n");
+        //获取第一行
+        String baser = reference.split("\r")[0];
+        String basen = reference.split("\n")[0];
+        String firstLine = baser.length() > basen.length() ? basen : baser;
+        //获取第一行结束
+        int kwIdx = firstLine.indexOf("??");
         String date = DateUtil.formatYYYYMMDD(new Date());
         String dateTime = DateUtil.format(new Date());
-        if (beginIdx > -1 && endIdx > -1) {
-            AssertUtil.isFalse(endIdx - beginIdx <= 2, "bad format!");
-            String keyword = reference.substring(beginIdx + 4, endIdx);
-            reference = "*" + keyword + "-begin*\r\n\r\n"
-                    + "> date: " + dateTime + "\r\n\r\n"
-                    + reference + "\r\n" + "*" + keyword + "-end*";
+        if (kwIdx > -1 && kwIdx + 2 < firstLine.length()) {
+            String keyword = firstLine.substring(kwIdx + 2);
+            reference = "<div>" + keyword + "-begin_type[" + type + "]\r\n\r\n</br>"
+                    + "date: " + dateTime + "\r\n\r\n</div>\r\n"
+                    + reference + "\r\n<div>" + keyword + "-end_type[" + type + "]</div>";
         } else {
-            reference = "*" + date + "-begin*\r\n\r\n"
-                    + "> date: " + dateTime + "\r\n\r\n"
-                    + reference + "\r\n" + "*" + date + "-end*";
+            reference = "<div>" + date + "-begin_type[" + type + "]\r\n\r\n</br>"
+                    + "date: " + dateTime + "\r\n\r\n</div>\r\n"
+                    + reference + "\r\n<div>" + date + "-end_type[" + type + "]</div>";
         }
-        reference="\r\n\r\n"+reference;
+        reference = "\r\n\r\n" + reference;
         File file = new File(oriFilePath);
         try {
             if (!file.exists()) {
@@ -191,20 +198,79 @@ public class Maincontroller {
         return ResponseEntity.ok().build();
     }
 
+
     private String getAndResolve(String keyword) {
         if (StringUtils.isBlank(keyword)) {
             return StringUtils.EMPTY;
         }
-        String fromLinux = getFromLinux(keyword);
-        if (StringUtils.isBlank(fromLinux)) {
+        List<String> fromLinux = getFromLinux(keyword);
+//        List<String> fromLinux = new ArrayList() {{
+//            add("<div>yy-begin_type[md]\n" +
+//                    "\n" +
+//                    "date: 2021-08-29 12:49:02\n" +
+//                    "\n" +
+//                    "</div>\n" +
+//                    "# markdown 航航??yy\n" +
+//                    "## fdsfd\n" +
+//                    "### fsdf\n" +
+//                    "- fsd\n" +
+//                    "> fdsf\n" +
+//                    "\n" +
+//                    "\n" +
+//                    "##### fsdfdsfdsfs\n" +
+//                    "<div>yy-end_type[md]</div>");
+//        }};
+        if (CollectionUtil.isEmpty(fromLinux)) {
             return StringUtils.EMPTY;
         }
-        return MarkdownUtils.renderHtml(fromLinux);
+        StringBuilder stringBuilder = new StringBuilder();
+        fromLinux.forEach(from -> {
+            String type = null;
+            try {
+                if (isBlank(from)) {
+                    return;
+                }
+                //get type
+                from = from.trim();
+                int ridx = from.indexOf("\r");
+                int nidx = from.indexOf("\n");
+                int max = Math.max(ridx, nidx);
+                if (max == -1) {
+                    return;
+                }
+                int min = Math.min(ridx, nidx);
+                String firstLine = from.substring(0, min == -1 ? max : min);
+                String[] sp = firstLine.split("_");
+                for (String s : sp) {
+                    if (s.startsWith("type[")) {
+                        type = s.split("\\[")[1].split("]")[0];
+                        break;
+                    }
+                }
+                type = StringUtils.isBlank(type) ? "html" : type;
+            } catch (Exception e) {
+                log.error("error occurred when resolve refefence!", e);
+                type = "html";
+            }
+            if ("html".equals(type)) {
+                stringBuilder.append(from).append("\r\n");
+            } else {
+                try {
+                    String[] split = from.split("</div>");
+                    String endPart = MarkdownUtils.renderHtml(split[1]);
+                    stringBuilder.append(split[0] + "</div>\r\n" + endPart).append("</div>\r\n");
+                } catch (Exception e) {
+                    log.error("error occurred when resolve md reference!", e);
+                    stringBuilder.append(MarkdownUtils.renderHtml(from)).append("\r\n");
+                }
+            }
+        });
+        return stringBuilder.toString();
     }
 
-    private String getFromLinux(String keyword) {
+    private List<String> getFromLinux(String keyword) {
         if (StringUtils.isBlank(keyword)) {
-            return StringUtils.EMPTY;
+            return new ArrayList<>();
         }
         Runtime run = Runtime.getRuntime();
 
@@ -220,12 +286,12 @@ public class Maincontroller {
             }
         } catch (Exception e) {
             log.error("error occurred when check configuration！", e);
-            return StringUtils.EMPTY;
+            return new ArrayList<>();
         }
 
         //get from linux
         try {
-            String param = "sh "+findCommandPath+" "+keyword;
+            String param = "sh " + findCommandPath + " " + keyword;
 //            Process process = run.exec(new String[]{"/bin/sh", "-c", findCommandPath, keyword});
             Process process = run.exec(param);
             InputStream in = process.getInputStream();
@@ -234,24 +300,81 @@ public class Maincontroller {
             StringBuilder stringBuilder = new StringBuilder();
             String result = null;
             while ((result = bs.readLine()) != null) {
-                if(StringUtils.equals("//delimit//",result)){
+                if (StringUtils.equals("//delimit//", result)) {
                     stringBuilder.append("\r\n\r\n");
                     partList.add(stringBuilder.toString());
-                    stringBuilder.delete(0,stringBuilder.length());
+                    stringBuilder.delete(0, stringBuilder.length());
                     continue;
                 }
                 stringBuilder.append("\r\n").append(result);
             }
             in.close();
             process.destroy();
-            if(stringBuilder.length()>0){
+            if (stringBuilder.length() > 0) {
                 partList.add(stringBuilder.toString());
             }
             List<String> reverse = CollectionUtil.reverse(partList);
-            return String.join("\r\n",reverse);
+            return reverse;
         } catch (IOException e) {
             log.error("error occurred when get from linux!", e);
-            return StringUtils.EMPTY;
+            return new ArrayList<>();
         }
+    }
+
+    @PostMapping(value = "/upload", consumes = {MediaType.MULTIPART_FORM_DATA_VALUE})
+    public ResponseEntity upload(@RequestParam("file") MultipartFile multipartFile) {
+        AssertUtil.notNull(multipartFile, "上传文件为空！");
+        log.info("upload file-{}", multipartFile.getSize());
+        try (InputStream inputStream = multipartFile.getInputStream();) {
+            String format = new SimpleDateFormat(DateUtil.DATE_FORMAT_YMDHMS).format(new Date());
+            File dir = new File(attachFileDir);
+            if (!dir.exists()) {
+                boolean mkdirs = dir.mkdirs();
+                AssertUtil.isTrue(mkdirs, "create attach dir failed!");
+            }
+            File file = new File(attachFileDir + "/" + format);
+            boolean newFile = file.createNewFile();
+            AssertUtil.isTrue(newFile, "create attach file failed!");
+            FileUtils.copyInputStreamToFile(inputStream, file);
+            return ResponseEntity.ok("/cfind/getAttach/" + format);
+        } catch (Exception e) {
+            log.error("error occurred when uploading file!", e);
+            return ResponseEntity.status(500).body("upload failed!");
+        }
+    }
+
+    @GetMapping("/getAttach/{id}")
+    public ResponseEntity getAttach(@PathVariable String id, HttpServletResponse response) {
+        LogUtil.apiEntry();
+        File file = new File(attachFileDir + "/" + id);
+        if (!file.exists()) {
+            log.error("attach file not exists-{}!", id);
+            return ResponseEntity.ok().build();
+        }
+        try (FileInputStream fileInputStream = FileUtils.openInputStream(file);
+             ServletOutputStream outputStream = response.getOutputStream();) {
+            IOUtils.copy(fileInputStream, outputStream);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("read attach file and write to response failed!", e);
+            return ResponseEntity.ok().build();
+        }
+    }
+
+    public static void main(String[] args) {
+//        String ss =
+//                "# markdown 航航??yy\n" +
+//                        "## fdsfd\n" +
+//                        "### fsdf\n" +
+//                        "- fsd\n" +
+//                        "> fdsf\n" +
+//                        "\n" +
+//                        "\n" +
+//                        "##### fsdfdsfdsfs" +
+//                        "<div></div>\n";
+//        System.out.println(MarkdownUtils.renderHtml(ss));
+        String xx = new Maincontroller().getAndResolve("xx");
+        System.out.println(xx);
+
     }
 }
