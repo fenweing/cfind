@@ -48,6 +48,7 @@ $(function () {
     add();
     writeBtnHandle();
     search();
+    searchKeyDown();
     locateIndex.bindEvent();
     paste.bindEvent();
 });
@@ -119,22 +120,34 @@ function add(type) {
     }
 }
 
+function searchKeyDown() {
+    var inputDom = $("#kwinput");
+    inputDom.bind('keypress', function (e) {
+        if (event.keyCode == 13) {
+            fillRes();
+        }
+    });
+}
+
 function search() {
     var queryBtn = $("#querybtn");
     queryBtn.click(function () {
-        $("#resdiv").html('');
-        var queryText = $("#kwinput").val();
-        if (queryText != undefined && queryText != '') {
-            $.ajax(
-                {
-                    url: host + "/cfind/search/" + queryText,
-                    type: "GET",
-                    success: function (result) {
-                        $("#resdiv").html(result);
-                    }
-                });
-        }
-
+        fillRes();
     })
+}
+
+function fillRes() {
+    $("#resdiv").html('');
+    var queryText = $("#kwinput").val();
+    if (queryText != undefined && queryText != '') {
+        $.ajax(
+            {
+                url: host + "/cfind/search/" + queryText,
+                type: "GET",
+                success: function (result) {
+                    $("#resdiv").html(result);
+                }
+            });
+    }
 }
 
