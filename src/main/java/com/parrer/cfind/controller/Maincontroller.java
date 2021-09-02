@@ -5,6 +5,7 @@ import com.parrer.util.AssertUtil;
 import com.parrer.util.CollectionUtil;
 import com.parrer.util.DateUtil;
 import com.parrer.util.LogUtil;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
@@ -12,12 +13,23 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServletResponse;
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -37,6 +49,8 @@ public class Maincontroller {
     private String oriFilePath;
     @Value("${cfind.attachFileDir:/cfind/attach}")
     private String attachFileDir;
+    @Value("${cfind.docFileDir:/cfind/doc}")
+    private String docFileDir;
 
     @GetMapping("/search/{keyword}")
     public ResponseEntity getByKeyword(@PathVariable("keyword") String keyword) {
@@ -148,15 +162,16 @@ public class Maincontroller {
 //                "\n" +
 //                "原文：https://www.cnblogs.com/zenglintao/p/12823285.html\n";
 //        html=MarkdownUtils.renderHtml(html);
-        String html = getAndResolve(keyword);
+        MainResponse response = getAndResolve(keyword);
 //        String html="<div><img src=\"/cfind/getAttach/20210828182837\"></div>";
-        return ResponseEntity.ok(html);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/add")
     public ResponseEntity addReference(@RequestBody Map<String, String> param) {
         String type = param.get("type");
-        log.info("/add 接口进入，type-{}",type);
+        log.info("/add 接口进入，type-{}", type);
+//        log.info("/add 接口进入，param-{}", JsonUtil.toString(param));
         String reference = param.get("reference");
         type = isBlank(type) ? "html" : type;
         if (isBlank(reference)) {
@@ -164,33 +179,45 @@ public class Maincontroller {
             return ResponseEntity.ok().build();
         }
         reference = reference.replace("%0A", "\r\n");
-        //获取第一行
-        String baser = reference.split("\r")[0];
-        String basen = reference.split("\n")[0];
-        String firstLine = baser.length() > basen.length() ? basen : baser;
-        //获取第一行结束
-        int kwIdx = firstLine.indexOf("??");
-        String date = DateUtil.formatYYYYMMDD(new Date());
-        String dateTime = DateUtil.format(new Date());
-        if (kwIdx > -1 && kwIdx + 2 < firstLine.length()) {
-            String keyword = firstLine.substring(kwIdx + 2);
-            reference = "<div>" + keyword + "-begin_type[" + type + "]\r\n\r\n</br>"
-                    + "date: " + dateTime + "\r\n\r\n</div>\r\n"
-                    + reference + "\r\n<div>" + keyword + "-end_type[" + type + "]</div>";
+        File file = null;
+        if ("file".equals(type)) {
+            String filename = param.get("filename");
+            AssertUtil.notEmpty(filename, "filename can not be blank!");
+            if (StringUtils.startsWith(filename, "f:")) {
+                filename = filename.substring(2);
+                AssertUtil.notEmpty(filename, "filename can not be blank!");
+            }
+            file = new File(docFileDir + "/" + filename);
+            reference="<p>_type[file]</p>\r\n"+reference;
         } else {
-            reference = "<div>" + date + "-begin_type[" + type + "]\r\n\r\n</br>"
-                    + "date: " + dateTime + "\r\n\r\n</div>\r\n"
-                    + reference + "\r\n<div>" + date + "-end_type[" + type + "]</div>";
+            //获取第一行
+            String baser = reference.split("\r")[0];
+            String basen = reference.split("\n")[0];
+            String firstLine = baser.length() > basen.length() ? basen : baser;
+            //获取第一行结束
+            int kwIdx = firstLine.indexOf("??");
+            String date = DateUtil.formatYYYYMMDD(new Date());
+            String dateTime = DateUtil.format(new Date());
+            if (kwIdx > -1 && kwIdx + 2 < firstLine.length()) {
+                String keyword = firstLine.substring(kwIdx + 2);
+                reference = "<div>" + keyword + "-begin_type[" + type + "]\r\n\r\n</br>"
+                        + "date: " + dateTime + "\r\n\r\n</div>\r\n"
+                        + reference + "\r\n<div>" + keyword + "-end_type[" + type + "]</div>";
+            } else {
+                reference = "<div>" + date + "-begin_type[" + type + "]\r\n\r\n</br>"
+                        + "date: " + dateTime + "\r\n\r\n</div>\r\n"
+                        + reference + "\r\n<div>" + date + "-end_type[" + type + "]</div>";
+            }
+            reference = "\r\n\r\n" + reference;
+            file = new File(oriFilePath);
         }
-        reference = "\r\n\r\n" + reference;
-        File file = new File(oriFilePath);
         try {
             if (!file.exists()) {
                 log.info("ori file not exists,create one!");
                 boolean newFile = file.createNewFile();
                 AssertUtil.isTrue(newFile, "create new ori file failed!");
             }
-            FileUtils.write(file, reference, StandardCharsets.UTF_8, true);
+            FileUtils.write(file, reference, StandardCharsets.UTF_8, !"file".equals(type));
         } catch (Exception e) {
             log.error("error occurred when write reference to orifile!", e);
             return ResponseEntity.status(500).build();
@@ -199,31 +226,25 @@ public class Maincontroller {
     }
 
 
-    private String getAndResolve(String keyword) {
+    private MainResponse getAndResolve(String keyword) {
         if (StringUtils.isBlank(keyword)) {
-            return StringUtils.EMPTY;
+            return new MainResponse();
         }
         List<String> fromLinux = getFromLinux(keyword);
-//        List<String> fromLinux = new ArrayList() {{
-//            add("<div>yy-begin_type[md]\n" +
-//                    "\n" +
-//                    "date: 2021-08-29 12:49:02\n" +
-//                    "\n" +
-//                    "</div>\n" +
-//                    "# markdown 航航??yy\n" +
-//                    "## fdsfd\n" +
-//                    "### fsdf\n" +
-//                    "- fsd\n" +
-//                    "> fdsf\n" +
-//                    "\n" +
-//                    "\n" +
-//                    "##### fsdfdsfdsfs\n" +
-//                    "<div>yy-end_type[md]</div>");
+//        List<String> fromLinux = new ArrayList() {
+//            private static final long serialVersionUID = 1641011651395500162L;
+//
+//            {
+//            add("_type[file]\n" +
+//                    "HH\n"+
+//                    "\n"+
+//                    "tt\n");
 //        }};
         if (CollectionUtil.isEmpty(fromLinux)) {
-            return StringUtils.EMPTY;
+            return new MainResponse();
         }
         StringBuilder stringBuilder = new StringBuilder();
+        StringBuilder textareaBuilder = new StringBuilder();
         fromLinux.forEach(from -> {
             String type = null;
             try {
@@ -236,6 +257,7 @@ public class Maincontroller {
                 int nidx = from.indexOf("\n");
                 int max = Math.max(ridx, nidx);
                 if (max == -1) {
+                    stringBuilder.append(from).append("\r\n");
                     return;
                 }
                 int min = Math.min(ridx, nidx);
@@ -249,12 +271,13 @@ public class Maincontroller {
                 }
                 type = StringUtils.isBlank(type) ? "html" : type;
             } catch (Exception e) {
-                log.error("error occurred when resolve refefence!", e);
+                log.error("error occurred when resolve reference!", e);
                 type = "html";
             }
+            log.info("type before deal-{}",type);
             if ("html".equals(type)) {
                 stringBuilder.append(from).append("\r\n");
-            } else {
+            } else if ("md".equals(type)) {
                 try {
                     String[] split = from.split("</div>");
                     String endPart = MarkdownUtils.renderHtml(split[1]);
@@ -263,9 +286,36 @@ public class Maincontroller {
                     log.error("error occurred when resolve md reference!", e);
                     stringBuilder.append(MarkdownUtils.renderHtml(from)).append("\r\n");
                 }
+            } else {
+                String[] nsplit = from.split("\n");
+                String[] rsplit = from.split("\r");
+                ArrayList<String> lines = CollectionUtil.ofList(nsplit.length > rsplit.length ? nsplit : rsplit);
+                if (CollectionUtil.isEmpty(lines)) {
+                    stringBuilder.append(from).append("\r\n").toString();
+                    return;
+                }
+                String fileNameFlagLine = lines.get(lines.size() - 1);
+                if (StringUtils.contains(fileNameFlagLine, "file:")) {
+                    lines.add(0, fileNameFlagLine);
+                    lines.remove(lines.size() - 1);
+                }
+                List<String> parsedLines = new ArrayList<>();
+                lines.forEach(line -> {
+                    if(StringUtils.isEmpty(line)){
+                        line="</br>";
+                    }
+                    parsedLines.add("<p style=\"margin:0px\">" + line + "</p>");
+                });
+                stringBuilder.append(StringUtils.join(parsedLines, "\n"));
+                lines.remove(0);
+                String fileFlagLine = lines.get(0);
+                if(fileFlagLine.indexOf("_type[file]")!=-1){
+                    lines.remove(0);
+                }
+                textareaBuilder.append(StringUtils.join(lines, "\n"));
             }
         });
-        return stringBuilder.toString();
+        return new MainResponse(stringBuilder.toString(), textareaBuilder.toString());
     }
 
     private List<String> getFromLinux(String keyword) {
@@ -306,7 +356,7 @@ public class Maincontroller {
                     stringBuilder.delete(0, stringBuilder.length());
                     continue;
                 }
-                stringBuilder.append("\r\n").append(result);
+                stringBuilder.append("\n").append(result);
             }
             in.close();
             process.destroy();
@@ -373,8 +423,23 @@ public class Maincontroller {
 //                        "##### fsdfdsfdsfs" +
 //                        "<div></div>\n";
 //        System.out.println(MarkdownUtils.renderHtml(ss));
-        String xx = new Maincontroller().getAndResolve("xx");
+        String xx = new Maincontroller().getAndResolve("xx").getTextareaContent();
         System.out.println(xx);
 
+    }
+
+    @Data
+    public static class MainResponse {
+        private String textareaContent;
+
+        public MainResponse(String divContent, String textareaContent) {
+            this.textareaContent = textareaContent;
+            this.divContent = divContent;
+        }
+
+        public MainResponse() {
+        }
+
+        private String divContent;
     }
 }

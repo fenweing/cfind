@@ -105,7 +105,8 @@ function add(type) {
         // addText=addText.replace("\n","\r\n");
         var param = {
             type: type,
-            reference: addText
+            reference: addText,
+            filename: $("#kwinput").val()
         };
         $.ajax(
             {
@@ -145,7 +146,11 @@ function fillRes() {
                 url: host + "/cfind/search/" + queryText,
                 type: "GET",
                 success: function (result) {
-                    $("#resdiv").html(result);
+                    $("#resdiv").html(result.divContent);
+                    var textareaContent = result.textareaContent;
+                    if(textareaContent!=undefined&&textareaContent!=''){
+                      $("#addarea").val(textareaContent);
+                    }
                 }
             });
     }
