@@ -148,8 +148,22 @@ function fillRes() {
                 success: function (result) {
                     $("#resdiv").html(result.divContent);
                     var textareaContent = result.textareaContent;
-                    if(textareaContent!=undefined&&textareaContent!=''){
-                      $("#addarea").val(textareaContent);
+                    if (textareaContent != undefined && textareaContent != '') {
+                        $("#addarea").val(textareaContent);
+                    }
+                    var htmldir = result.htmldir;
+                    if (htmldir == undefined || htmldir.length == 0) {
+                        return;
+                    }
+                    var iframeDiv = $("#iframeDiv");
+                    for (dir in htmldir) {
+                        if (dir == undefined || dir.length == 0) {
+                            continue;
+                        }
+                        var src = "/getHtml/" + dir + ".html";
+                        iframeDiv.append(
+                            "</br>" + "<iframe src=\"" + src + "\"></iframe>"
+                        );
                     }
                 }
             });

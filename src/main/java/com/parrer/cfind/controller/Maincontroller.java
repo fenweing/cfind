@@ -1,6 +1,8 @@
 package com.parrer.cfind.controller;
 
 import com.parrer.cfind.MarkdownUtils;
+import com.parrer.component.BaseImpl;
+import com.parrer.function.FConsumer;
 import com.parrer.util.AssertUtil;
 import com.parrer.util.CollectionUtil;
 import com.parrer.util.DateUtil;
@@ -11,6 +13,8 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,7 +46,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 @Slf4j
 @RestController
 @RequestMapping("/cfind")
-public class Maincontroller {
+public class Maincontroller extends BaseImpl implements ApplicationRunner {
     @Value("${cfind.command:/cfind/cfind.sh}")
     private String findCommandPath;
     @Value("${cfind.oriFilePath:/cfind/file}")
@@ -51,6 +55,65 @@ public class Maincontroller {
     private String attachFileDir;
     @Value("${cfind.docFileDir:/cfind/doc}")
     private String docFileDir;
+    @Value("${cfind.htmlFileDir:/cfind/html}")
+    private String htmlFileDir;
+    String addEvent = "addEvent";
+    String html = "html";
+
+    @Override
+    public void run(ApplicationArguments args) throws Exception {
+        addStrategyGroup(addEvent).addStrategy(html, (FConsumer<String>) (reference) -> {
+            addHtml(reference);
+        });
+    }
+
+    private void addHtml(String reference) {
+        AssertUtil.notEmpty(reference, "html content can not be blank!");
+        //deal kw line
+        String firstLine = reference.substring(0, reference.indexOf("\n"));
+        int kwIdx = firstLine.indexOf("??");
+        String keyword = firstLine.substring(kwIdx + 2);
+        AssertUtil.notEmpty(keyword, "key word is null,reference-{}", reference);
+        //deal kw line end
+        //deal host line
+        reference = reference.substring(firstLine.length());
+        int hostEndIdx = reference.indexOf("\n");
+        AssertUtil.isTrue(hostEndIdx != -1, "invalid html content-{}", reference);
+        String hostLine = reference.substring(0, hostEndIdx);
+        String prefix = hostLine.startsWith("http://") ? "http://" :
+                (hostLine.startsWith("https://") ? "https://" : "");
+        AssertUtil.notEmpty(prefix, "invalid html content-{}", reference);
+        String substring = hostLine.substring(prefix.length());
+        int sepIdx = substring.indexOf("/");
+        String host = sepIdx == -1 ? substring : substring.substring(0, sepIdx);
+        AssertUtil.notEmpty(host, "invalid html content-{}", reference);
+        host = prefix + host + "/";
+        //deal host line end
+        //deal head block
+        String htmlReference = reference.substring(hostLine.length());
+        AssertUtil.notEmpty(htmlReference, "empty html reference,total reference-{}", reference);
+        String completeHtml = htmlReference;
+        if (!htmlReference.startsWith("<html>")) {
+            int headBeginIdx = htmlReference.indexOf("<head>");
+            int headEndIdx = htmlReference.indexOf("</head>");
+            String headBlock = "";
+            if (headBeginIdx != -1 && headEndIdx != -1) {
+                headBlock = htmlReference.substring(headBeginIdx, headEndIdx + 7);
+            }
+            //deal head block end
+            //deal div block
+            String divBlock = headEndIdx != -1 ? htmlReference.substring(headEndIdx + 8) : htmlReference;
+            AssertUtil.notEmpty(divBlock, "divBlock can not be null!");
+            //deal div block end
+            completeHtml = "<html>" + headBlock + "<body>" + divBlock + "</body></html>";
+        }
+        String dateFlag = new SimpleDateFormat(DateUtil.DATE_FORMAT_YMDHMS).format(new Date());
+        completeHtml = dealScriptItem(completeHtml);
+        String dirName = keyword + "_" + dateFlag;
+        completeHtml = dealLinkItem(completeHtml, dirName);
+        boolean writeHtmlFile = createAndWriteFile(completeHtml, new File(htmlFileDir + "/" + dirName + "/" + dirName + ".html"), false);
+        AssertUtil.isTrue(writeHtmlFile, "create html file failed!");
+    }
 
     @GetMapping("/search/{keyword}")
     public ResponseEntity getByKeyword(@PathVariable("keyword") String keyword) {
@@ -59,112 +122,27 @@ public class Maincontroller {
             log.error("blank keyword!");
             return ResponseEntity.ok().build();
         }
-//        String html = "一、软件下载 >>->navicat<-<<\n" +
-//                "[下载patch包](http://cloud.tuanbaol.com/s/KdYp9Xc54wQr9fb)\n" +
-//                "\n" +
-//                "二、软件安装\n" +
-//                "双击运行Navicat Premium 15\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-3b6e9085e4ab449fbaf7cdbb1a032271.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 选择软件安装路径\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-3fccba83e4e845cd91691b9c7b6bfed1.png)\n" +
-//                " \n" +
-//                "\n" +
-//                "接下来一直点击下一步，最后点击完成\n" +
-//                "\n" +
-//                "安装完成后不要运行软件\n" +
-//                "\n" +
-//                "三、开始激活\n" +
-//                "进行破解前，请先关闭电脑的杀毒软件\n" +
-//                "\n" +
-//                "双击运行注册机\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-3d2d763fb7774ee7badda82cf2a2252b.png)\n" +
-//                "\n" +
-//                "如果你的电脑只安装了一个navicat的产品，在打开注册机的时候一般会自动识别\n" +
-//                "\n" +
-//                "如果没有自动识别，就按照上面的图片勾选\n" +
-//                "\n" +
-//                "然后点击patch(破解)\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-ee8325e9c00a4233be4fac326264c5a8.png)\n" +
-//                "\n" +
-//                " \n" +
-//                "\n" +
-//                " 找到你软件的安装路径，然后打开即可\n" +
-//                "\n" +
-//                "找不到安装路径的朋友可以右键图标，选择打开文件路径\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-37c556b2ad2c4afbbdf3ecf0020531d9.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 弹出这个提示，就是破解成功，点击确定\n" +
-//                "\n" +
-//                "接着点击Generate生成激活码\n" +
-//                "\n" +
-//                "然后再点击copy复制激活码\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-d55de174a08d46a7b29704561408d1c8.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 双击运行Navicat Premium 15，选择注册\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-01a26903d5d04feea13e998976cd8022.png)\n" +
-//                "\n" +
-//                "\n" +
-//                " \n" +
-//                "\n" +
-//                " ctrl+v粘贴激活码，点击激活\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-a9aacbd319db4de5ab86adcefe99e790.png)\n" +
-//                "\n" +
-//                " \n" +
-//                "\n" +
-//                " 然后点击手动激活\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-63f13ed44fb941d1abe388f96c7a5851.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 右键全选复制请求码\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-28a84fecf2374c10bd326cda7b88cee6.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 然后在注册机中填写请求码，点击Generate生成激活码，再点击copy复制激活码\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-1287867566774642a88217c37bd7b59e.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 复制后将激活码填入navicat中\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-55ed012db73143ccb9c6af4f7c060147.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 点击激活，破解完成\n" +
-//                "\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-0c8f15b0092f48f7987d31a5d37c6c5b.png)\n" +
-//                " \n" +
-//                "\n" +
-//                " 最后点击确定即可\n" +
-//                "\n" +
-//                "![image.png](http://www.tuanbaol.com/upload/2020/11/image-bf9cc2a02d364a0f8d78cbc54c20532d.png)\n" +
-//                "\n" +
-//                "原文：https://www.cnblogs.com/zenglintao/p/12823285.html\n";
 //        html=MarkdownUtils.renderHtml(html);
         MainResponse response = getAndResolve(keyword);
 //        String html="<div><img src=\"/cfind/getAttach/20210828182837\"></div>";
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/getHtml/{page}")
+    public ResponseEntity getHtml(@PathVariable String page, HttpServletResponse response) {
+        LogUtil.apiEntry(page);
+        AssertUtil.notEmpty(page, "get html dir can not be blank!");
+        page = StringUtils.removeEnd(page, ".html");
+        File file = new File(htmlFileDir + "/" + page + "/" + page);
+        AssertUtil.isTrue(file.exists(), "html dir not exists,dir-{}", page);
+        try (FileInputStream fileInputStream = FileUtils.openInputStream(file);
+             ServletOutputStream outputStream = response.getOutputStream();) {
+            IOUtils.copy(fileInputStream, outputStream);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("read html file and write to response failed!", e);
+            return ResponseEntity.ok().build();
+        }
     }
 
     @PostMapping("/add")
@@ -188,7 +166,9 @@ public class Maincontroller {
                 AssertUtil.notEmpty(filename, "filename can not be blank!");
             }
             file = new File(docFileDir + "/" + filename);
-            reference="<p>_type[file]</p>\r\n"+reference;
+            reference = "<p>_type[file]</p>\r\n" + reference;
+        } else if ("html".equals(type)) {
+            ((FConsumer) getStrategyGroup(addEvent).getStrategy(html)).consume(reference);
         } else {
             //获取第一行
             String baser = reference.split("\r")[0];
@@ -211,24 +191,32 @@ public class Maincontroller {
             reference = "\r\n\r\n" + reference;
             file = new File(oriFilePath);
         }
+        if (!createAndWriteFile(reference, file, !"file".equals(type))) {
+            return ResponseEntity.status(500).build();
+        }
+        return ResponseEntity.ok().build();
+    }
+
+    private boolean createAndWriteFile(String reference, File file, boolean append) {
         try {
             if (!file.exists()) {
                 log.info("ori file not exists,create one!");
                 boolean newFile = file.createNewFile();
                 AssertUtil.isTrue(newFile, "create new ori file failed!");
             }
-            FileUtils.write(file, reference, StandardCharsets.UTF_8, !"file".equals(type));
+            FileUtils.write(file, reference, StandardCharsets.UTF_8, append);
+            return true;
         } catch (Exception e) {
             log.error("error occurred when write reference to orifile!", e);
-            return ResponseEntity.status(500).build();
+            return false;
         }
-        return ResponseEntity.ok().build();
     }
 
 
     private MainResponse getAndResolve(String keyword) {
+        MainResponse mainResponse = new MainResponse();
         if (StringUtils.isBlank(keyword)) {
-            return new MainResponse();
+            return mainResponse;
         }
         List<String> fromLinux = getFromLinux(keyword);
 //        List<String> fromLinux = new ArrayList() {
@@ -241,7 +229,7 @@ public class Maincontroller {
 //                    "tt\n");
 //        }};
         if (CollectionUtil.isEmpty(fromLinux)) {
-            return new MainResponse();
+            return mainResponse;
         }
         StringBuilder stringBuilder = new StringBuilder();
         StringBuilder textareaBuilder = new StringBuilder();
@@ -262,6 +250,18 @@ public class Maincontroller {
                 }
                 int min = Math.min(ridx, nidx);
                 String firstLine = from.substring(0, min == -1 ? max : min);
+                //html file
+                String htmldirFlag = "htmldir:";
+                if (firstLine.startsWith(htmldirFlag)) {
+                    String dirs = firstLine.substring(htmldirFlag.length());
+                    if (isBlank(dirs)) {
+                        return;
+                    }
+                    String[] disArr = dirs.split(" ");
+                    mainResponse.getHtmldir().addAll(CollectionUtil.ofList(disArr));
+                    return;
+                }
+                //html file end
                 String[] sp = firstLine.split("_");
                 for (String s : sp) {
                     if (s.startsWith("type[")) {
@@ -274,7 +274,7 @@ public class Maincontroller {
                 log.error("error occurred when resolve reference!", e);
                 type = "html";
             }
-            log.info("type before deal-{}",type);
+            log.info("type before deal-{}", type);
             if ("html".equals(type)) {
                 stringBuilder.append(from).append("\r\n");
             } else if ("md".equals(type)) {
@@ -301,21 +301,22 @@ public class Maincontroller {
                 }
                 List<String> parsedLines = new ArrayList<>();
                 lines.forEach(line -> {
-                    if(StringUtils.isEmpty(line)){
-                        line="</br>";
+                    if (StringUtils.isEmpty(line)) {
+                        line = "</br>";
                     }
                     parsedLines.add("<p style=\"margin:0px\">" + line + "</p>");
                 });
                 stringBuilder.append(StringUtils.join(parsedLines, "\n"));
                 lines.remove(0);
                 String fileFlagLine = lines.get(0);
-                if(fileFlagLine.indexOf("_type[file]")!=-1){
+                if (fileFlagLine.indexOf("_type[file]") != -1) {
                     lines.remove(0);
                 }
                 textareaBuilder.append(StringUtils.join(lines, "\n"));
             }
         });
-        return new MainResponse(stringBuilder.toString(), textareaBuilder.toString());
+        return mainResponse.setDivContent(stringBuilder.toString())
+                .setTextareaContent(textareaBuilder.toString());
     }
 
     private List<String> getFromLinux(String keyword) {
@@ -395,7 +396,7 @@ public class Maincontroller {
 
     @GetMapping("/getAttach/{id}")
     public ResponseEntity getAttach(@PathVariable String id, HttpServletResponse response) {
-        LogUtil.apiEntry();
+        LogUtil.apiEntry(id);
         File file = new File(attachFileDir + "/" + id);
         if (!file.exists()) {
             log.error("attach file not exists-{}!", id);
@@ -431,6 +432,9 @@ public class Maincontroller {
     @Data
     public static class MainResponse {
         private String textareaContent;
+        private String divContent;
+        private List<String> htmldir;
+
 
         public MainResponse(String divContent, String textareaContent) {
             this.textareaContent = textareaContent;
@@ -440,6 +444,19 @@ public class Maincontroller {
         public MainResponse() {
         }
 
-        private String divContent;
+        public MainResponse setTextareaContent(String textareaContent) {
+            this.textareaContent = textareaContent;
+            return this;
+        }
+
+        public MainResponse setDivContent(String divContent) {
+            this.divContent = divContent;
+            return this;
+        }
+
+        public MainResponse setHtmldir(List<String> htmldir) {
+            this.htmldir = htmldir;
+            return this;
+        }
     }
 }
