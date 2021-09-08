@@ -138,7 +138,9 @@ function search() {
 }
 
 function fillRes() {
+    $("#keyListDiv").html('');
     $("#resdiv").html('');
+    $("#iframeDiv").html('');
     var queryText = $("#kwinput").val();
     if (queryText != undefined && queryText != '') {
         $.ajax(
@@ -155,18 +157,29 @@ function fillRes() {
                     if (htmldir == undefined || htmldir.length == 0) {
                         return;
                     }
-                    var iframeDiv = $("#iframeDiv");
-                    for (dir in htmldir) {
-                        if (dir == undefined || dir.length == 0) {
-                            continue;
-                        }
-                        var src = "/getHtml/" + dir + ".html";
-                        iframeDiv.append(
-                            "</br>" + "<iframe src=\"" + src + "\"></iframe>"
-                        );
+                    if (htmldir.length == 1) {
+                        showHtml(htmldir[0]);
+                        return;
                     }
+                    htmldir.forEach(function (v, k, $this) {
+                        var keyListDiv = $("#keyListDiv");
+                        var strings = v.split("_");
+                        keyListDiv.append("<p data-dirname=\"" + v + "\" onclick=\"showHtml('" + v + "')\">" + strings[0] + "</p>");
+                    });
                 }
             });
     }
+}
+
+function showHtml(v) {
+    if (v == undefined || v.length == 0) {
+        return;
+    }
+    var iframeDiv = $("#iframeDiv");
+    iframeDiv.html('');
+    var src = "/cfind/getHtml/" + v + "/" + v + ".html";
+    iframeDiv.append(
+        "</br>" + "<iframe src=\"" + src + "\" style=\"width: 100%;height: 100%;\"></iframe>"
+    );
 }
 
